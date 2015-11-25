@@ -1,0 +1,18 @@
+#!/bin/bash
+
+cd $(dirname "${BASH_SOURCE}")/..
+
+mvn package
+scp ./target/kafka_spark_streaming-1.0-jar-with-dependencies.jar root@front1.ryba:/root
+
+echo | ssh -q root@front1.ryba <<EOF
+spark-submit \
+ --class Consumer \
+ --jars /root/scala-hello_2.10-0.0.1.jar \
+ --queue default \
+ --master yarn-cluster --num-executors 2 --driver-memory 512m \
+ --executor-memory 512m --executor-cores 1 \
+ kafka_spark_streaming-1.0-jar-with-dependencies.jar \
+ -input_topic input_topic \
+ -b "master1.ryba:9092,master2.ryba:9092,master3.ryba:9092"
+EOF
