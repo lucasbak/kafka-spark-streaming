@@ -1,9 +1,19 @@
 package com.adaltas.www
 
+import java.io.File
+import java.net.URLClassLoader
+import java.nio.charset.StandardCharsets._
+import java.security.PrivilegedAction
 import java.text.{SimpleDateFormat, DateFormat}
 import java.util.{Date, Properties}
 
-
+import org.apache.hadoop.hbase.security.UserProvider
+import org.apache.hadoop.hbase.zookeeper.ZKUtil
+import org.apache.hadoop.security.Credentials
+import org.apache.hadoop.yarn.conf.YarnConfiguration
+import org.apache.spark.deploy.SparkHadoopUtil
+import scala.reflect.runtime.universe
+import org.apache.hadoop.io.Text
 import _root_.kafka.producer.Producer
 import _root_.kafka.producer.ProducerConfig
 import _root_.kafka.serializer.StringDecoder
@@ -12,21 +22,31 @@ import org.apache.commons.cli.CommandLine
 import org.apache.commons.cli.CommandLineParser
 import org.apache.commons.cli.HelpFormatter
 import org.apache.commons.cli.Options
+
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.hbase.HBaseConfiguration
-import org.apache.hadoop.hbase.client.HTable
-import org.apache.spark.SparkConf
+import org.apache.hadoop.fs.Path
+import org.apache.hadoop.hbase._
+import org.apache.hadoop.hbase.client._
+import org.apache.hadoop.hbase.security.token.TokenUtil
+import org.apache.hadoop.security.UserGroupInformation
+import org.apache.hadoop.security.token.{TokenIdentifier, Token}
+
+
+import org.apache.spark.{Logging, SparkConf}
+
 import org.apache.spark.streaming.Seconds
 import org.apache.spark.streaming.StreamingContext
 import org.apache.spark.streaming.kafka.KafkaUtils
+import scala.reflect.runtime.{universe => ru}
 
 /**
  * @author Lucas bkian
  */
-object Streamer {
+object Streamer extends Logging{
 
 
   def main(args : Array[String]) {
+
 
     /**
       * command line parsing amd options
@@ -52,36 +72,38 @@ object Streamer {
       f.printHelp("Usage", main_options)
       System.exit(-1)
     }
+
     else {
 
       /**
         * Context Configuration & Creation
         */
+//      val conf = new SparkConf().setAppName("Spark Streamer").setExecutorEnv("KRB5CCNAME","FILE:/tmp/krb5cc_2415").setExecutorEnv("java.security.krb5.conf","/etc/krb5.conf").setExecutorEnv("sun.security.krb5.debug","true")
       val conf = new SparkConf().setAppName("Spark Streamer")
       val ssc = new StreamingContext(conf, Seconds(2))
 
       /**
         * HBase & kerberos Configuration
         */
-//      System.setProperty("java.security.krb5.conf", "/etc/krb5.conf")
-//      System.setProperty("sun.security.krb5.debug", "true")
-//      System.setProperty("KRB5CCNAME","FILE:/tmp/krb5cc_0")
-//      val hbase_conf: Configuration = HBaseConfiguration.create()
-//      hbase_conf.set("hbase.zookeeper.quorum", cmd.getOptionValue("z","master1.ryba,master2.ryba,master3.ryba"))
-//      hbase_conf.set("hbase.zookeeper.property.clientPort", cmd.getOptionValue("zp","2181"))
-//      hbase_conf.set("hadoop.security.authentication", "kerberos")
-//      hbase_conf.set("hbase.security.authentication", "kerberos")
-//      val master_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
-//      val region_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
-//      hbase_conf.set("hbase.master.kerberos.principal", master_princ)
-//      hbase_conf.set("hbase.regionserver.kerberos.principal",  region_princ)
-//      val hbase_conf = HBaseConfiguration.create()
-//      hbase_conf.addResource(new Path("/etc/hbase/conf/core-site.xml"))
-//      hbase_conf.addResource(new Path("/etc/hbase/conf/hbase-site.xml"))
-//
-//      val hbaseContext = new HBaseContext(sc, conf);
+      System.setProperty("java.security.krb5.conf", "/etc/krb5.conf")
+      System.setProperty("sun.security.krb5.debug", "true")
+//      System.setProperty("KRB5CCNAME","FILE:/tmp/krb5cc_2415")
+      val hbase_conf: Configuration = HBaseConfiguration.create()
 
 
+      hbase_conf.addResource(new Path("/etc/hbase/conf/core-site.xml"))
+      hbase_conf.addResource(new Path("/etc/hbase/conf/hbase-site.xml"))
+
+      hbase_conf.set("hbase.rpc.controllerfactory.class",  "org.apache.hadoop.hbase.ipc.RpcControllerFactory")
+      hbase_conf.set("hbase.zookeeper.quorum", cmd.getOptionValue("z","master1.ryba,master2.ryba,master3.ryba"))
+      hbase_conf.set("hbase.zookeeper.property.clientPort", cmd.getOptionValue("zp","2181"))
+      hbase_conf.set("hadoop.security.authentication", "kerberos")
+      hbase_conf.set("hbase.security.authentication", "kerberos")
+
+      val master_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
+      val region_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
+      hbase_conf.set("hbase.master.kerberos.principal", master_princ)
+      hbase_conf.set("hbase.regionserver.kerberos.principal",  region_princ)
 
       /**
         * commandline option parsing
@@ -111,43 +133,77 @@ object Streamer {
       // messages.foreachRDD( x => println(x))
       var counter = 0
 
+
       messages.foreachRDD { x =>
-
-        val formatter: DateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm");
-        counter+= 1
+        val hbaseOutputWriter: HbaseWriter = new HbaseWriter()
+        UserGroupInformation.setConfiguration(hbase_conf)
+        val formatter: DateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm")
+        counter += 1
         val current_date = formatter.format(new Date())
-
         /**
           * Writing producer message
           */
         // creating message
-        val message = "Spark - date:" + current_date + " from topic: " +input_topics + " counter: " + counter;
+        val message = "Spark - date:" + current_date + " from topic: " + input_topics + " counter: " + counter;
         /**
           * writing to kafka
           */
         // creating producer
         val producer: Producer[String, String] = new Producer[String, String](config)
-        // creating kafka producer
+        //  creating kafka producer
         val KafkaOutputWriter: KafkaProducer = new KafkaProducer()
         KafkaOutputWriter.writeToKafka(cmd.getOptionValue("output_topic", "output_topic"), message, producer)
 
         /**
           * Writing to HBAse
           */
-  //        val hbaseOutputWriter: HbaseWriter = new HbaseWriter()
-  //        val table: HTable = new HTable(hbase_conf,cmd.getOptionValue("table","test"))
-  //        val rowkey: String =   String.valueOf(System.currentTimeMillis()/1000)
-  //        hbaseOutputWriter.insertToHbase(rowkey,"message",message,"cf1",table)
-  //        hbaseOutputWriter.insertToHbase(rowkey,"counter",counter.toString,"cf1",table)
+        if (cmd.hasOption("table")) {
+          if (UserGroupInformation.isSecurityEnabled) {
+            val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(cmd.getOptionValue("principal", "tester@HADOOP.RYBA"), cmd.getOptionValue("keytab", "/etc/security/keytabs/tester.keytab"))
+            val c: Configuration = hbase_conf
+            loggedUGI.doAs(new PrivilegedAction[Void] {
+              override def run() = {
 
+                try {
+                  val admin: HBaseAdmin = new HBaseAdmin(c)
+                  if (!admin.isTableAvailable("table_1")) {
+                    val tableDesc: HTableDescriptor = new HTableDescriptor(TableName.valueOf(cmd.getOptionValue("table")))
+                    admin.createTable(tableDesc)
+                  }
+                  // old HBase API usage
+                  val hConnection: HConnection = HConnectionManager.createConnection(c)
+                  val table: HTableInterface = hConnection.getTable(cmd.getOptionValue("table"))
+                  val rowkey: String = String.valueOf(System.currentTimeMillis() / 1000)
+                  hbaseOutputWriter.insertToHbase(rowkey, "message", message, "cf1", table)
+
+
+                }
+                null
+              }
+
+            })
+          }
+          else {
+            // old HBase API usage
+            val admin: HBaseAdmin = new HBaseAdmin(hbase_conf)
+            if (!admin.isTableAvailable("table_1")) {
+              val tableDesc: HTableDescriptor = new HTableDescriptor(TableName.valueOf(cmd.getOptionValue("table")))
+              admin.createTable(tableDesc)
+            }
+            val hConnection: HConnection = HConnectionManager.createConnection(hbase_conf)
+            val table: HTableInterface = hConnection.getTable(cmd.getOptionValue("table"))
+            val rowkey: String = String.valueOf(System.currentTimeMillis() / 1000)
+            hbaseOutputWriter.insertToHbase(rowkey, "message", message, "cf1", table)
+
+
+          }
+        }
       }
-
       /**
         * spark streaming lifecycle
         */
       ssc.start()
       ssc.awaitTermination()
-
 
     }
   }
