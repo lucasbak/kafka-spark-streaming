@@ -59,9 +59,11 @@ You can build, deploy and start the spark streamer by running the script or by e
   A similar [issue][hive-spark] has been opened for Hive and corrected for Spark 1.5.3 and 1.6.0. No issue opened for HBase now.
   As a work around, the spark job fetches delegation token it self for interacting with HBase.
 
-  This posts assumes that you job user submitter is already created and his keytab deployed on every worker node. Or you can follow following steps:
+  This posts assumes that you job user submitter is already created and his keytab deployed on every worker node and have hbase-site.xml  amd core-site.xml files on every node of your cluster with read permission for everyone.
 
   ## Help
+
+  Follow this steps to set up a test user
 
   * Create a kerberos principal
 
