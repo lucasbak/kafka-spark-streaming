@@ -62,6 +62,8 @@ object Streamer extends Logging{
     main_options.addOption("region_p","region_principal", true, " hbase.regionserver.kerberos.principal")
     main_options.addOption("r","realm", true, " e.g. HADOOP.RYBA")
     main_options.addOption("table","hbase_table", true, " the hbase table to write to, no output written if not specified")
+    main_options.addOption("principal","user_principal", true, " the user principal")
+    main_options.addOption("keytab","user_keytab", true, " the user's pricipal's keytab")
 
     val parser: CommandLineParser = new BasicParser
     val cmd: CommandLine = parser.parse(main_options, args)
@@ -100,10 +102,10 @@ object Streamer extends Logging{
       hbase_conf.set("hadoop.security.authentication", "kerberos")
       hbase_conf.set("hbase.security.authentication", "kerberos")
 
-      val master_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
-      val region_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
-      hbase_conf.set("hbase.master.kerberos.principal", master_princ)
-      hbase_conf.set("hbase.regionserver.kerberos.principal",  region_princ)
+//      val master_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
+//      val region_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
+//      hbase_conf.set("hbase.master.kerberos.principal", master_princ)
+//      hbase_conf.set("hbase.regionserver.kerberos.principal",  region_princ)
 
       /**
         * commandline option parsing
@@ -111,18 +113,19 @@ object Streamer extends Logging{
 
       val input_topics = cmd.getOptionValue("input_topic", "page_visits")
       /**
-        * Kafka Configuration
+        * Kafka Configuration for creating input DStream
         */
-      val kafkaParams: Map[String, String] = Map[String, String]("metadata.broker.list" -> cmd.getOptionValue("b"))
+      val broker_list = cmd.getOptionValue("b")
+      val kafkaParams: Map[String, String] = Map[String, String]("metadata.broker.list" -> broker_list)
       val topicsSet = input_topics.split(",").toSet
       /**
-        * Kafka Producer Configuration
+        * Kafka Producer Configuration for writing output as producers
         */
       val props: Properties = new Properties
-      props.put("metadata.broker.list", cmd.getOptionValue("b"))
+      props.put("metadata.broker.list", broker_list)
       props.put("serializer.class", "kafka.serializer.StringEncoder")
       props.put("request.required.acks", "1")
-      val config: ProducerConfig = new ProducerConfig(props)
+
 
 
       /**
@@ -132,72 +135,67 @@ object Streamer extends Logging{
       // http://spark.apache.org/docs/1.4.1/streaming-programming-guide.html#output-operations
       // messages.foreachRDD( x => println(x))
       var counter = 0
-
-
+      val pairs = messages.map(s => (s, 1))
+      val number_message = pairs.reduceByKey((a, b) => a + b).count()
       messages.foreachRDD { x =>
-        val hbaseOutputWriter: HbaseWriter = new HbaseWriter()
-        UserGroupInformation.setConfiguration(hbase_conf)
+
+        /** Creating message to write **/
         val formatter: DateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm")
         counter += 1
         val current_date = formatter.format(new Date())
-        /**
-          * Writing producer message
-          */
-        // creating message
-        val message = "Spark - date:" + current_date + " from topic: " + input_topics + " number of RDD (batches): "+  counter
-        /**
-          * writing to kafka
-          */
-        // creating producer
-        val producer: Producer[String, String] = new Producer[String, String](config)
-        //  creating kafka producer
-        val KafkaOutputWriter: KafkaProducer = new KafkaProducer()
-        KafkaOutputWriter.writeToKafka(cmd.getOptionValue("output_topic", "output_topic"), message, producer)
+        val message = "Spark - date:" + current_date + " from topic: " + input_topics + " number of message :"+ number_message + " number of RDD (batches): "+  counter
 
-        /**
-          * Writing to HBAse
-          */
+        /*** Writing to KAFKA if 'output_topic' specified */
+        if(cmd.hasOption("output_topic")) {
+          // creating producer
+          val config_kafka_producers: ProducerConfig = new ProducerConfig(props)
+          val producer: Producer[String, String] = new Producer[String, String](config_kafka_producers)
+          //  creating kafka producer
+          val KafkaOutputWriter: KafkaProducer = new KafkaProducer()
+          KafkaOutputWriter.writeToKafka(cmd.getOptionValue("output_topic", "output_topic"), message, producer)
+        }
+
+        /*** Writing to HBAse if 'table' name specified */
         if (cmd.hasOption("table")) {
+          val hbaseOutputWriter: HbaseWriter = new HbaseWriter()
+          UserGroupInformation.setConfiguration(hbase_conf)
+          val table_name = cmd.getOptionValue("table")
           if (UserGroupInformation.isSecurityEnabled) {
+            // Authenticate as the USER and return the USER with VALID KERBEROS CREDENTIALS
             val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(cmd.getOptionValue("principal", "tester@HADOOP.RYBA"), cmd.getOptionValue("keytab", "/etc/security/keytabs/tester.keytab"))
             val c: Configuration = hbase_conf
+            // OPEN HBase connection with Previous USER
             loggedUGI.doAs(new PrivilegedAction[Void] {
               override def run() = {
                 try {
+                  // Check if the table exist create otherwise
                   val admin: HBaseAdmin = new HBaseAdmin(c)
-                  if (!admin.isTableAvailable(cmd.getOptionValue("table"))) {
-                    val tableDesc: HTableDescriptor = new HTableDescriptor(TableName.valueOf(cmd.getOptionValue("table")))
+                  if (!admin.isTableAvailable(table_name)) {
+                    val tableDesc: HTableDescriptor = new HTableDescriptor(TableName.valueOf(table_name))
                     admin.createTable(tableDesc)
                   }
                   // old HBase API usage
                   val hConnection: HConnection = HConnectionManager.createConnection(c)
-                  val table: HTableInterface = hConnection.getTable(cmd.getOptionValue("table"))
+                  val table: HTableInterface = hConnection.getTable(table_name)
                   val rowkey: String = String.valueOf(System.currentTimeMillis() / 1000)
                   hbaseOutputWriter.insertToHbase(rowkey, "message", message, "cf1", table)
 //                  val connection: Connection = ConnectionFactory.createConnection(c)
-
-
-
-
                 }
                 null
               }
-
             })
           }
           else {
             // old HBase API usage
             val admin: HBaseAdmin = new HBaseAdmin(hbase_conf)
-            if (!admin.isTableAvailable(cmd.getOptionValue("table"))) {
-              val tableDesc: HTableDescriptor = new HTableDescriptor(TableName.valueOf(cmd.getOptionValue("table")))
+            if (!admin.isTableAvailable(table_name)) {
+              val tableDesc: HTableDescriptor = new HTableDescriptor(TableName.valueOf(table_name))
               admin.createTable(tableDesc)
             }
             val hConnection: HConnection = HConnectionManager.createConnection(hbase_conf)
-            val table: HTableInterface = hConnection.getTable(cmd.getOptionValue("table"))
+            val table: HTableInterface = hConnection.getTable(table_name)
             val rowkey: String = String.valueOf(System.currentTimeMillis() / 1000)
             hbaseOutputWriter.insertToHbase(rowkey, "message", message, "cf1", table)
-
-
           }
         }
       }

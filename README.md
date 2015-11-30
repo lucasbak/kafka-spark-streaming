@@ -1,12 +1,11 @@
 
+# Build, Deploy
 
-# Build, Deploy and run
-
-You can build, deploy and start the spark streamer by running the script or by executing the command manually. Replace kerberos principal value and/or broker list for both methods.
+You can build, deploy the spark streamer by running the script or by executing the command manually. Replace kerberos principal value and/or broker list for both methods.
 
 * With the bin
   ```bash
-  bin/stream
+  bin/stream 
   ```
 
 * Manually
@@ -18,20 +17,28 @@ You can build, deploy and start the spark streamer by running the script or by e
   ```
 - Deploy the spark uberized jar
   ```bash
-   scp ./target/ kafka_spark_streaming-1.0-jar-with-dependencies.jar root@front1.ryba:/root/
-
+   scp ./target/kafka_spark_streaming-1.0-jar-with-dependencies.jar root@front1.ryba:/root/
   ```
+  
+# Run the JOB
+
+The Job reads data from Kafka and write to Kafka and/or to HBase
+
+## Writing to kafka
+
 - Launch the spark streaming consumer/producer program with input topic 'input_topic' and output topic 'output_topic'
+
     ```bash
-    echo password | kinit principal@REALM {
+    echo password | kinit tester@REALM {
     /usr/hdp/current/spark-client/bin/spark-submit \
     --master yarn-cluster \
     /root/kafka_spark_streaming-1.0-jar-with-dependencies.jar \
     -input_topic input_topic \
     -b "master1.ryba:9092,master2.ryba:9092,master3.ryba:9092"
-  }
+    -output_topic my_output_topic
+    }
     ```
-- Start the kafka consumer console
+- Start the kafka consumer console (for reading from spark job output)
   ```
   /usr/hdp/current/kafka-broker/bin/kafka-console-consumer.sh \
   --topic "input_topic" \
@@ -39,7 +46,7 @@ You can build, deploy and start the spark streamer by running the script or by e
   --from-beginning
   ```
 
-- Start the kafka-perf tester
+- Start the kafka-perf tester (for creating spark Dstream input )
   ```bash
   /usr/hdp/current/kafka-broker/bin/kafka-producer-perf-test.sh \
   --messages 100 \
@@ -47,9 +54,11 @@ You can build, deploy and start the spark streamer by running the script or by e
   --request-num-acks 1
   ```
 
-  # Using HBase secured mode
+# Writing to HBase secured (kerberos) cluster
 
-  ## Description
+## How it works
+
+- Description
 
   Since Spark 1.4.1, Spark Jobs can interact with hbase kerberized cluster by fetching and using needed token.
   For this it uses the runtime reflection scala mechanism ( introduced in 2.10 ) to load the Hbase TokenUtil Class and
@@ -60,11 +69,30 @@ You can build, deploy and start the spark streamer by running the script or by e
   As a work around, the spark job fetches delegation token it self for interacting with HBase.
 
   This posts assumes that you job user submitter is already created and his keytab deployed on every worker node and have hbase-site.xml  amd core-site.xml files on every node of your cluster with read permission for everyone.
+  spark is configured and works in yarn cluster mode
 
-  ## Help
+- Run the command
+    ```bash
+    echo password | kinit tester@REALM.COM {
+    /usr/hdp/current/spark-client/bin/spark-submit \
+    --master yarn-cluster \
+    /root/kafka_spark_streaming-1.0-jar-with-dependencies.jar \
+    -input_topic input_topic \
+    -b "master1.ryba:9092,master2.ryba:9092,master3.ryba:9092" \
+    -input_topic my_input_topic \
+    -principal tester@REALM.COM \
+    -keytab /path/to/keytab \
+    -z host1,host2,host2 \
+    -zp 2181
+    }
+    ```
+  
+## Debugging
+  
+### Principal
 
-  Follow this steps to set up a test user
-
+  When creating a job submitter user be sure to follow this steps:
+  
   * Create a kerberos principal
 
    ```bash
@@ -91,5 +119,27 @@ You can build, deploy and start the spark streamer by running the script or by e
     create 'table_tester', { NAME => 'cf1'}
     grant 'tester', 'RWC', 'table_tester'
     ```
+  * Creating hdfs layout for user:
+  ```bash
+    hdfs dfs -mkdir /user/tester
+    hdfs dfs -chown -r tester:tester /user/tester
+   ```
+    
+### Hbase-site
+
+Be careful to have hive-site.xml file deployed on every nodemanager in /etc/hbase/conf/hbase-site.xml
+The Hbase site has to contain the master, and region server principal.
+it must contain the following properties
+  * "hbase.rpc.controllerfactory.class"
+  * "hbase.zookeeper.quorum"
+  * "hbase.zookeeper.property.clientPort"
+  * "hadoop.security.authentication"
+  * "hbase.security.authentication"
+
+the hbase.zookeeper.quorum and hbase.zookeeper.property.clientPort can be passed to command line as -z, --zk_quorum  and -zp, --zk_port
+
+### Spark conf
+
+spark-default.conf and spark-env.sh exists and rightly configured in /etc/spark/conf/ 
 
 [hive-spark]:(https://issues.apache.org/jira/browse/SPARK-11265)
