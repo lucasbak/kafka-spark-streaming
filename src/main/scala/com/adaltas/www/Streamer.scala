@@ -61,7 +61,7 @@ object Streamer extends Logging{
     main_options.addOption("master_p","master_principal", true, " hbase.master.kerberos.principal  ")
     main_options.addOption("region_p","region_principal", true, " hbase.regionserver.kerberos.principal")
     main_options.addOption("r","realm", true, " e.g. HADOOP.RYBA")
-    main_options.addOption("table","hbase_table", true, " the hbase table, default to test")
+    main_options.addOption("table","hbase_table", true, " the hbase table to write to, no output written if not specified")
 
     val parser: CommandLineParser = new BasicParser
     val cmd: CommandLine = parser.parse(main_options, args)
@@ -144,7 +144,7 @@ object Streamer extends Logging{
           * Writing producer message
           */
         // creating message
-        val message = "Spark - date:" + current_date + " from topic: " + input_topics + " counter: " + counter;
+        val message = "Spark - date:" + current_date + " from topic: " + input_topics + " number of RDD (batches): "+  counter
         /**
           * writing to kafka
           */
@@ -163,10 +163,9 @@ object Streamer extends Logging{
             val c: Configuration = hbase_conf
             loggedUGI.doAs(new PrivilegedAction[Void] {
               override def run() = {
-
                 try {
                   val admin: HBaseAdmin = new HBaseAdmin(c)
-                  if (!admin.isTableAvailable("table_1")) {
+                  if (!admin.isTableAvailable(cmd.getOptionValue("table"))) {
                     val tableDesc: HTableDescriptor = new HTableDescriptor(TableName.valueOf(cmd.getOptionValue("table")))
                     admin.createTable(tableDesc)
                   }
@@ -175,6 +174,9 @@ object Streamer extends Logging{
                   val table: HTableInterface = hConnection.getTable(cmd.getOptionValue("table"))
                   val rowkey: String = String.valueOf(System.currentTimeMillis() / 1000)
                   hbaseOutputWriter.insertToHbase(rowkey, "message", message, "cf1", table)
+//                  val connection: Connection = ConnectionFactory.createConnection(c)
+
+
 
 
                 }
@@ -186,7 +188,7 @@ object Streamer extends Logging{
           else {
             // old HBase API usage
             val admin: HBaseAdmin = new HBaseAdmin(hbase_conf)
-            if (!admin.isTableAvailable("table_1")) {
+            if (!admin.isTableAvailable(cmd.getOptionValue("table"))) {
               val tableDesc: HTableDescriptor = new HTableDescriptor(TableName.valueOf(cmd.getOptionValue("table")))
               admin.createTable(tableDesc)
             }
