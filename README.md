@@ -78,6 +78,10 @@ The Job reads data from Kafka and write to Kafka and/or to HBase
 
 
 - Run the command
+The Spark Job will write to hbase table_message, at 'cf1' column family
+-bulk is optional. It writes the content of each kafka message into a separate table
+(e.g. table_bulk)
+
   ```bash
   kinit tester@REALM.COM
   /usr/hdp/current/spark-client/bin/spark-submit \
@@ -90,6 +94,8 @@ The Job reads data from Kafka and write to Kafka and/or to HBase
   -keytab /path/to/keytab \
   -z host1,host2,host2 \
   -zp 2181
+  -table table_message
+  -bulk table_bulk
   ```
 
 ## Debugging
@@ -130,8 +136,8 @@ These instructions might not been complete according to how you set up your clus
   * ACL's - Create a table with enough permission for the user"
   ```bash
   kinit hbase@REALM.COM
-  hbase shell -e "create " table_tester", { NAME => 'cf1' }"
-  hbase shell -e "grant 'tester', 'RWC', 'table_tester'"
+  hbase shell >$ create "table_tester", { NAME => 'cf1' }
+  hbase shell >$ grant 'tester', 'RWC', 'table_tester'
   ```
 
   * Hbase-site

@@ -64,6 +64,7 @@ object Streamer extends Logging{
     main_options.addOption("table","hbase_table", true, " the hbase table to write to, no output written if not specified")
     main_options.addOption("principal","user_principal", true, " the user principal")
     main_options.addOption("keytab","user_keytab", true, " the user's pricipal's keytab")
+    main_options.addOption("bulk","bulk_table", true, " if specified write all the read kafka messages to the table ")
 
     val parser: CommandLineParser = new BasicParser
     val cmd: CommandLine = parser.parse(main_options, args)
@@ -209,10 +210,17 @@ object Streamer extends Logging{
                   val table: HTableInterface = hConnection.getTable(table_name)
                   val rowkey: String = String.valueOf(System.currentTimeMillis() / 1000)
                   // line put
-                  hbaseOutputWriter.insertToHbase(rowkey, "message", message, "cf1", table)
-                  // bulk put
-                  hbaseOutputWriter.insertToHbase(rowkey+"-content-", "kafka_produced", x.distinct(), "cf1", table)
+                  hbaseOutputWriter.insertToHbase(rowkey, "messages", message, "cf1", table)
+                  if(cmd.hasOption("bulk")) {
+                    if (!admin.isTableAvailable(cmd.getOptionValue("bulk"))) {
+                      val tableDescbulk: HTableDescriptor = new HTableDescriptor(TableName.valueOf(cmd.getOptionValue("bulk")))
+                      admin.createTable(tableDescbulk)
+                    }
+                    val table_bulk: HTableInterface = hConnection.getTable(cmd.getOptionValue("bulk"))
+                    // bulk put
+                    hbaseOutputWriter.insertToHbase(rowkey + "-content-", "kafka_produced", x.distinct(), "cf1", table_bulk)
 
+                  }
                 }
                 null
               }
@@ -229,6 +237,17 @@ object Streamer extends Logging{
             val table: HTableInterface = hConnection.getTable(table_name)
             val rowkey: String = String.valueOf(System.currentTimeMillis() / 1000)
             hbaseOutputWriter.insertToHbase(rowkey, "message", message, "cf1", table)
+            if(cmd.hasOption("bulk")) {
+              if (!admin.isTableAvailable(cmd.getOptionValue("bulk"))) {
+                val tableDescbulk: HTableDescriptor = new HTableDescriptor(TableName.valueOf(cmd.getOptionValue("bulk")))
+                admin.createTable(tableDescbulk)
+              }
+              val table_bulk: HTableInterface = hConnection.getTable(cmd.getOptionValue("bulk"))
+
+              // bulk put
+              hbaseOutputWriter.insertToHbase(rowkey + "-content-", "kafka_produced", x.distinct(), "cf1", table_bulk)
+            }
+
           }
         }
       }
