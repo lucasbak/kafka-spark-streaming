@@ -24,7 +24,7 @@ import org.apache.commons.cli.HelpFormatter
 import org.apache.commons.cli.Options
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.hbase._
 import org.apache.hadoop.hbase.client._
 import org.apache.hadoop.hbase.security.token.TokenUtil
@@ -83,13 +83,41 @@ object Streamer extends Logging{
 //      val conf = new SparkConf().setAppName("Spark Streamer").setExecutorEnv("KRB5CCNAME","FILE:/tmp/krb5cc_2415").setExecutorEnv("java.security.krb5.conf","/etc/krb5.conf").setExecutorEnv("sun.security.krb5.debug","true")
       val conf = new SparkConf().setAppName("Spark Streamer")
       val ssc = new StreamingContext(conf, Seconds(2))
+      /**
+        * keytab distribution to executor (workaround HBase)
+        */
+      val hdfs_path = new Path(cmd.getOptionValue("keytab",""))
+      val principal = cmd.getOptionValue("principal","")
+      val local_path = new Path (System.getenv("PWD")+"/"+ hdfs_path.getName.split("/").last)
+      println("localpath"+local_path)
+
+
+      if(UserGroupInformation.isSecurityEnabled){
+        val hdfs_conf = new Configuration()
+        logDebug("hdfs_path "+ hdfs_path)
+        logDebug("local_path "+ local_path)
+        hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/core-site.xml"))
+        hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/hdfs-site.xml"))
+//        hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/mapred-site.xml"))
+        val fileSystem = FileSystem.get(hdfs_conf)
+        println("distributing keytab to executors")
+        if(hdfs_path.toString.contains("hdfs:")){
+          println("hdfs_path.toString.contains : hdfs:x" + hdfs_path)
+
+          fileSystem.copyToLocalFile(hdfs_path,local_path)
+        }
+      }
 
       /**
         * HBase & kerberos Configuration
         */
       System.setProperty("java.security.krb5.conf", "/etc/krb5.conf")
       System.setProperty("sun.security.krb5.debug", "true")
-//      System.setProperty("KRB5CCNAME","FILE:/tmp/krb5cc_2415")
+
+
+
+
+
       val hbase_conf: Configuration = HBaseConfiguration.create()
 
 
@@ -143,7 +171,7 @@ object Streamer extends Logging{
         val formatter: DateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm")
         counter += 1
         val current_date = formatter.format(new Date())
-        val message = "Spark - date:" + current_date + " from topic: " + input_topics + " number of message :"+ number_message + " number of RDD (batches): "+  counter
+        val message = "Spark - date:" + current_date + " from topic: " + input_topics + " - number of RDD (batches): "+  counter + " - number of message " + x.count()
 
         /*** Writing to KAFKA if 'output_topic' specified */
         if(cmd.hasOption("output_topic")) {
@@ -155,14 +183,16 @@ object Streamer extends Logging{
           KafkaOutputWriter.writeToKafka(cmd.getOptionValue("output_topic", "output_topic"), message, producer)
         }
 
-        /*** Writing to HBAse if 'table' name specified */
+        /*** Writing to HBase if 'table' name specified */
         if (cmd.hasOption("table")) {
           val hbaseOutputWriter: HbaseWriter = new HbaseWriter()
           UserGroupInformation.setConfiguration(hbase_conf)
           val table_name = cmd.getOptionValue("table")
           if (UserGroupInformation.isSecurityEnabled) {
             // Authenticate as the USER and return the USER with VALID KERBEROS CREDENTIALS
-            val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(cmd.getOptionValue("principal", "tester@HADOOP.RYBA"), cmd.getOptionValue("keytab", "/etc/security/keytabs/tester.keytab"))
+//            val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(cmd.getOptionValue("principal", "tester@HADOOP.RYBA"), cmd.getOptionValue("keytab", "/etc/security/keytabs/tester.keytab"))
+            println("localpath2"+local_path.toString)
+            val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(principal, local_path.toString)
             val c: Configuration = hbase_conf
             // OPEN HBase connection with Previous USER
             loggedUGI.doAs(new PrivilegedAction[Void] {
@@ -178,8 +208,11 @@ object Streamer extends Logging{
                   val hConnection: HConnection = HConnectionManager.createConnection(c)
                   val table: HTableInterface = hConnection.getTable(table_name)
                   val rowkey: String = String.valueOf(System.currentTimeMillis() / 1000)
+                  // line put
                   hbaseOutputWriter.insertToHbase(rowkey, "message", message, "cf1", table)
-//                  val connection: Connection = ConnectionFactory.createConnection(c)
+                  // bulk put
+                  hbaseOutputWriter.insertToHbase(rowkey+"-content-", "kafka_produced", x.distinct(), "cf1", table)
+
                 }
                 null
               }

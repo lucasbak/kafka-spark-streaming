@@ -70,26 +70,33 @@ The Job reads data from Kafka and write to Kafka and/or to HBase
   This posts assumes that you job user submitter is already created and his keytab deployed on every worker node and have hbase-site.xml  and core-site.xml files on every node of your cluster with read permission for everyone.
   spark is configured and works in yarn cluster mode
 
+- Deploy Keytabs (if kerberized)
+
+  Two modes are possible (for backward compatibility designed to run on spark from 1.3.1)
+  * Deploy the keytab your self on every node managers, at the location that you will specifiy  with -keytab option
+  * Put the keytab in hdfs. With this method the location should start by 'hdfs:'   (e.g. hdfs://hdfs_namenode:8020/user/tester/tester.keytab)
+
+
 - Run the command
-    ```bash
-    kinit tester@REALM.COM
-    /usr/hdp/current/spark-client/bin/spark-submit \
-    --master yarn-cluster \
-    /root/kafka_spark_streaming-1.0-jar-with-dependencies.jar \
-    -input_topic input_topic \
-    -b "master1.ryba:9092,master2.ryba:9092,master3.ryba:9092" \
-    -input_topic my_input_topic \
-    -principal tester@REALM.COM \
-    -keytab /path/to/keytab \
-    -z host1,host2,host2 \
-    -zp 2181
-    ```
+  ```bash
+  kinit tester@REALM.COM
+  /usr/hdp/current/spark-client/bin/spark-submit \
+  --master yarn-cluster \
+  /root/kafka_spark_streaming-1.0-jar-with-dependencies.jar \
+  -input_topic input_topic \
+  -b "master1.ryba:9092,master2.ryba:9092,master3.ryba:9092" \
+  -input_topic my_input_topic \
+  -principal tester@REALM.COM \
+  -keytab /path/to/keytab \
+  -z host1,host2,host2 \
+  -zp 2181
+  ```
 
 ## Debugging
 
 These instructions might not been complete according to how you set up your cluster. These are the main steps I needed to execute to make it work.
 
-### Principal
+### Kerberos
 
   When creating a job submitter user be sure to follow this steps:
 
@@ -102,45 +109,51 @@ These instructions might not been complete according to how you set up your clus
    ```bash
    ktadd -k /path/to/tester.keytab tester@REALM.COM
    ```
-  * deploy the keytab on every worker node
-    ```bash
-    scp  /path/to/tester.keytab login@worker_host:/path/to/tester.keytab
-    chmod 0700 /path/to/tester.keytab
-    ```
-  * create the user ( and allowing to submit to yarn)
+  * deploy the keytab on every worker node or in hdfs
+
+### User  
+
+  Create the user ( and allowing to submit to yarn)
     ```bash
     useradd tester -g hadoop
     ```
+### HDFS
 
-  * don't forget to create a table with enough permission for the user which will write to HBase.
-    ```bash
-    # HBase shell
-    kinit hbase@REALM.COM
-    create 'table_tester', { NAME => 'cf1'}
-    grant 'tester', 'RWC', 'table_tester'
-    ```
-  * Creating hdfs layout for user.
+  Create hdfs layout for user.
     ```bash
     hdfs dfs -mkdir /user/tester
     hdfs dfs -chown -R tester:tester /user/tester
     ```
 
-### Hbase-site
+### HBase
 
-Be careful to have hive-site.xml file deployed on every nodemanager in /etc/hbase/conf/hbase-site.xml
-The Hbase site has to contain the master, and region server principal.
-it must contain the following properties
-  * "hbase.rpc.controllerfactory.class"
-  * "hbase.zookeeper.quorum"
-  * "hbase.zookeeper.property.clientPort"
-  * "hadoop.security.authentication"
-  * "hbase.security.authentication"
+  * ACL's - Create a table with enough permission for the user"
+  ```bash
+  kinit hbase@REALM.COM
+  hbase shell -e "create " table_tester", { NAME => 'cf1' }"
+  hbase shell -e "grant 'tester', 'RWC', 'table_tester'"
+  ```
 
-the hbase.zookeeper.quorum and hbase.zookeeper.property.clientPort can be passed to command line as -z, --zk_quorum  and -zp, --zk_port
+  * Hbase-site
+  The Hbase site has to contain the master, and region server principal.
+  it must contain the following properties
+    - "hbase.rpc.controllerfactory.class"
+    - "hbase.zookeeper.quorum"
+    - "hbase.zookeeper.property.clientPort"
+    - "hadoop.security.authentication"
+    - "hbase.security.authentication"
+  the hbase.zookeeper.quorum and hbase.zookeeper.property.clientPort
+  can be passed to command line as -z, --zk_quorum  and -zp, --zk_port
+
+### Hadoop conf
+
+  Be sure to have following file deployed on every yarn node managers:
+  - hbase-site.xml in /etc/hbase/conf/hbase-site.xml
+  - core-site in /etc/hadoop/conf/
 
 ### Spark conf
 
-spark-default.conf and spark-env.sh exists and rightly configured in /etc/spark/conf/
+spark-default.conf and spark-env.sh should exist and rightly configured in /etc/spark/conf/
 
 [ryba-io]:(https://github.com/ryba-io/ryba)
 [hive-spark]:(https://issues.apache.org/jira/browse/SPARK-11265)
