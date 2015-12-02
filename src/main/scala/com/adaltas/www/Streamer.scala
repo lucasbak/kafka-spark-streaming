@@ -90,8 +90,6 @@ object Streamer extends Logging{
       val hdfs_path = new Path(cmd.getOptionValue("keytab",""))
       val principal = cmd.getOptionValue("principal","")
       val local_path = new Path (System.getenv("PWD")+"/"+ hdfs_path.getName.split("/").last)
-      println("localpath"+local_path)
-
 
       if(UserGroupInformation.isSecurityEnabled){
         val hdfs_conf = new Configuration()
@@ -101,10 +99,8 @@ object Streamer extends Logging{
         hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/hdfs-site.xml"))
 //        hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/mapred-site.xml"))
         val fileSystem = FileSystem.get(hdfs_conf)
-        println("distributing keytab to executors")
-        if(hdfs_path.toString.contains("hdfs:")){
-          println("hdfs_path.toString.contains : hdfs:x" + hdfs_path)
 
+        if(hdfs_path.toString.contains("hdfs:")){
           fileSystem.copyToLocalFile(hdfs_path,local_path)
         }
       }
@@ -162,7 +158,7 @@ object Streamer extends Logging{
         */
       val messages = KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topicsSet)
       // http://spark.apache.org/docs/1.4.1/streaming-programming-guide.html#output-operations
-      // messages.foreachRDD( x => println(x))
+
       var counter = 0
       val pairs = messages.map(s => (s, 1))
       val number_message = pairs.reduceByKey((a, b) => a + b).count()
@@ -192,7 +188,6 @@ object Streamer extends Logging{
           if (UserGroupInformation.isSecurityEnabled) {
             // Authenticate as the USER and return the USER with VALID KERBEROS CREDENTIALS
 //            val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(cmd.getOptionValue("principal", "tester@HADOOP.RYBA"), cmd.getOptionValue("keytab", "/etc/security/keytabs/tester.keytab"))
-            println("localpath2"+local_path.toString)
             val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(principal, local_path.toString)
             val c: Configuration = hbase_conf
             // OPEN HBase connection with Previous USER
@@ -218,7 +213,7 @@ object Streamer extends Logging{
                     }
                     val table_bulk: HTableInterface = hConnection.getTable(cmd.getOptionValue("bulk"))
                     // bulk put
-                    hbaseOutputWriter.insertToHbase(rowkey + "-content-", "kafka_produced", x.distinct(), "cf1", table_bulk)
+                    hbaseOutputWriter.insertToHbase(rowkey + "-", "content", x.distinct(), "cf1", table_bulk)
 
                   }
                 }
@@ -245,7 +240,7 @@ object Streamer extends Logging{
               val table_bulk: HTableInterface = hConnection.getTable(cmd.getOptionValue("bulk"))
 
               // bulk put
-              hbaseOutputWriter.insertToHbase(rowkey + "-content-", "kafka_produced", x.distinct(), "cf1", table_bulk)
+              hbaseOutputWriter.insertToHbase(rowkey + "-", "content", x.distinct(), "cf1", table_bulk)
             }
 
           }
