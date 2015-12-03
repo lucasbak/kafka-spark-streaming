@@ -95,8 +95,6 @@ object Streamer extends Logging{
         val hdfs_conf = new Configuration()
         logDebug("hdfs_path "+ hdfs_path)
         logDebug("local_path "+ local_path)
-        hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/core-site.xml"))
-        hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/hdfs-site.xml"))
 //        hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/mapred-site.xml"))
         val fileSystem = FileSystem.get(hdfs_conf)
 
@@ -118,8 +116,8 @@ object Streamer extends Logging{
       val hbase_conf: Configuration = HBaseConfiguration.create()
 
 
-      hbase_conf.addResource(new Path("/etc/hbase/conf/core-site.xml"))
-      hbase_conf.addResource(new Path("/etc/hbase/conf/hbase-site.xml"))
+      hbase_conf.addResource(new Path(System.getenv("PWD")+"/"+"core-site.xml"))
+      hbase_conf.addResource(new Path(System.getenv("PWD")+"/"+"hbase-site.xml"))
 
       hbase_conf.set("hbase.rpc.controllerfactory.class",  "org.apache.hadoop.hbase.ipc.RpcControllerFactory")
       hbase_conf.set("hbase.zookeeper.quorum", cmd.getOptionValue("z","master1.ryba,master2.ryba,master3.ryba"))
