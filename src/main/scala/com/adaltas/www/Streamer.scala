@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets._
 import java.security.PrivilegedAction
 import java.text.{SimpleDateFormat, DateFormat}
 import java.util.{Date, Properties}
+import javax.security.auth.login.LoginContext
 
 import org.apache.hadoop.hbase.security.UserProvider
 import org.apache.hadoop.hbase.zookeeper.ZKUtil
@@ -27,9 +28,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.hbase._
 import org.apache.hadoop.hbase.client._
-import org.apache.hadoop.hbase.security.token.TokenUtil
 import org.apache.hadoop.security.UserGroupInformation
-import org.apache.hadoop.security.token.{TokenIdentifier, Token}
 
 
 import org.apache.spark.{Logging, SparkConf}
@@ -96,44 +95,35 @@ object Streamer extends Logging{
         logDebug("hdfs_path "+ hdfs_path)
         logDebug("local_path "+ local_path)
 //        hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/mapred-site.xml"))
+
         val fileSystem = FileSystem.get(hdfs_conf)
-
-        if(hdfs_path.toString.contains("hdfs:")){
-          fileSystem.copyToLocalFile(hdfs_path,local_path)
-        }
+        UserGroupInformation.getCurrentUser.doAs(new PrivilegedAction[Void] {
+          override def run() = {
+            try {
+              if (hdfs_path.toString.contains("hdfs:")) {
+                fileSystem.copyToLocalFile(hdfs_path, local_path)
+              }
+               null
+            }
+          }
+        })
       }
-
       /**
         * HBase & kerberos Configuration
         */
       System.setProperty("java.security.krb5.conf", "/etc/krb5.conf")
       System.setProperty("sun.security.krb5.debug", "true")
-
-
-
-
-
       val hbase_conf: Configuration = HBaseConfiguration.create()
-
-
       hbase_conf.addResource(new Path(System.getenv("PWD")+"/"+"core-site.xml"))
       hbase_conf.addResource(new Path(System.getenv("PWD")+"/"+"hbase-site.xml"))
-
       hbase_conf.set("hbase.rpc.controllerfactory.class",  "org.apache.hadoop.hbase.ipc.RpcControllerFactory")
       hbase_conf.set("hbase.zookeeper.quorum", cmd.getOptionValue("z","master1.ryba,master2.ryba,master3.ryba"))
       hbase_conf.set("hbase.zookeeper.property.clientPort", cmd.getOptionValue("zp","2181"))
       hbase_conf.set("hadoop.security.authentication", "kerberos")
-      hbase_conf.set("hbase.security.authentication", "kerberos")
-
-//      val master_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
-//      val region_princ = cmd.getOptionValue("master_p","hbase/_HOST") + "@" + cmd.getOptionValue("r","HADOOP.RYBA")
-//      hbase_conf.set("hbase.master.kerberos.principal", master_princ)
-//      hbase_conf.set("hbase.regionserver.kerberos.principal",  region_princ)
-
+      hbase_conf.set("hbase.security.authentication", "kerberos"
       /**
         * commandline option parsing
         */
-
       val input_topics = cmd.getOptionValue("input_topic", "page_visits")
       /**
         * Kafka Configuration for creating input DStream
@@ -148,9 +138,6 @@ object Streamer extends Logging{
       props.put("metadata.broker.list", broker_list)
       props.put("serializer.class", "kafka.serializer.StringEncoder")
       props.put("request.required.acks", "1")
-
-
-
       /**
         *  DStream Configuration and creation
         */
@@ -161,13 +148,11 @@ object Streamer extends Logging{
       val pairs = messages.map(s => (s, 1))
       val number_message = pairs.reduceByKey((a, b) => a + b).count()
       messages.foreachRDD { x =>
-
         /** Creating message to write **/
         val formatter: DateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm")
         counter += 1
         val current_date = formatter.format(new Date())
         val message = "Spark - date:" + current_date + " from topic: " + input_topics + " - number of RDD (batches): "+  counter + " - number of message " + x.count()
-
         /*** Writing to KAFKA if 'output_topic' specified */
         if(cmd.hasOption("output_topic")) {
           // creating producer

@@ -57,7 +57,7 @@ The Job reads data from Kafka and write to Kafka and/or to HBase
 
 ## How it works
 
-- Description
+- Issue
 
   Since Spark 1.4.1, Spark Jobs can interact with hbase kerberized cluster by fetching and using needed token.
   For this it uses the runtime reflection scala mechanism ( introduced in 2.10 ) to load the Hbase TokenUtil Class and
@@ -70,6 +70,54 @@ The Job reads data from Kafka and write to Kafka and/or to HBase
   This posts assumes that you job user submitter is already created and his keytab deployed on every worker node and have hbase-site.xml  and core-site.xml files on every node of your cluster with read permission for everyone.
   spark is configured and works in yarn cluster mode
 
+- How it works
+
+  Here the main workaround is to authenticate programmatically, get the new logged user and use it to communicate with HBase.
+  The current logged user contains, HDFS_DELEGATION_TOKEN (hdfs), YARN_TS_DELEGATION_TOKEN, and YARN_AM_DELEGATION_TOKEN, but there are not enough 
+  to communicate with HBase with needs is own delegation token (like hive metastore), but as said above, 
+  SPARK can not retrieve it due to missing class at runtime.
+  Create a new instance of the current user, loggin from keytab to be able to open connection with hbase as the user.
+  
+   Get a new authenticated user programmatically:
+   ```scala
+   val loggedUGI = UserGroupInformation.loginUserFromKeytabAndReturnUGI("user","keytab")
+   ```
+   Communicate with Hbase as the new user
+   ```scala
+   loggedUGI.doAs(new PrivilegedAction[Void] {
+                 override def run() = {
+                   try {
+                    /* Communicate with Hbase */
+                    }
+                    catch(...){
+                    println(e) 
+                    }
+                 }
+   }
+   ```
+- Warnings:
+
+   *  This method does not fetch HBase delegation token, but authenticate to kerberos only. that;s why it is called workaround.
+   It is the same as doing:
+   ```
+   kinit tester@HADOOP.RYBA -kt tester.keytab
+   hbase shell
+   ```
+   
+   * By default SPARK has a mechanism to renew hbase delegation token, in case you have a long running job like Spark'streaming job.
+   Here such a mechanism  is not implemented ( in progress ).
+   So if you want to have a long running job, increase the expiration time ticket, and reduce it when your job is done.
+   
+   * In every case the keytab must be found locally by the executors (yarn nodemanager node). This is due to the loginUserFromKeytabAndReturnUGI
+   method with only take a local path as a parameter.
+   So you can deploy it your self or put it into hdfs and the spark job will deploy it for you
+   
+   * hbase-site.xml
+   This file is also needed by every executors (yarn nodemanager node). You have to use the Spark mechanism to deploy it by using the 
+   --files option. It will put it in the worker's working directory.
+   
+
+  
 - Deploy Keytabs (if kerberized)
 
   Two modes are possible (for backward compatibility designed to run on spark from 1.3.1)
