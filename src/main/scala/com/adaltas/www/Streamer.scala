@@ -1,52 +1,26 @@
 package com.adaltas.www
 
-import java.io.File
-import java.net.URLClassLoader
-import java.nio.charset.StandardCharsets._
 import java.security.PrivilegedAction
-import java.text.{SimpleDateFormat, DateFormat}
+import java.text.{DateFormat, SimpleDateFormat}
 import java.util.{Date, Properties}
-import javax.security.auth.login.LoginContext
-
-import org.apache.hadoop.hbase.security.UserProvider
-import org.apache.hadoop.hbase.zookeeper.ZKUtil
-import org.apache.hadoop.security.Credentials
-import org.apache.hadoop.yarn.conf.YarnConfiguration
-import org.apache.spark.deploy.SparkHadoopUtil
-import scala.reflect.runtime.universe
-import org.apache.hadoop.io.Text
-import _root_.kafka.producer.Producer
-import _root_.kafka.producer.ProducerConfig
+import _root_.kafka.producer.{Producer, ProducerConfig}
 import _root_.kafka.serializer.StringDecoder
-import org.apache.commons.cli.BasicParser
-import org.apache.commons.cli.CommandLine
-import org.apache.commons.cli.CommandLineParser
-import org.apache.commons.cli.HelpFormatter
-import org.apache.commons.cli.Options
-
+import org.apache.commons.cli.{BasicParser, CommandLine, CommandLineParser, HelpFormatter, Options}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.hbase._
 import org.apache.hadoop.hbase.client._
 import org.apache.hadoop.security.UserGroupInformation
-
-
-import org.apache.spark.{Logging, SparkConf}
-
-import org.apache.spark.streaming.Seconds
-import org.apache.spark.streaming.StreamingContext
+import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.streaming.kafka.KafkaUtils
-import scala.reflect.runtime.{universe => ru}
+import org.apache.spark.{Logging, SparkConf}
 
 /**
  * @author Lucas bkian
  */
 object Streamer extends Logging{
 
-
   def main(args : Array[String]) {
-
-
     /**
       * command line parsing amd options
       */
@@ -69,14 +43,12 @@ object Streamer extends Logging{
     val cmd: CommandLine = parser.parse(main_options, args)
 
     if (cmd.hasOption("help_kafka")) {
-
       val f: HelpFormatter = new HelpFormatter()
       f.printHelp("Usage", main_options)
       System.exit(-1)
     }
 
     else {
-
       /**
         * Context Configuration & Creation
         */
@@ -86,27 +58,32 @@ object Streamer extends Logging{
       /**
         * keytab distribution to executor (workaround HBase)
         */
-      val hdfs_path = new Path(cmd.getOptionValue("keytab",""))
-      val principal = cmd.getOptionValue("principal","")
-      val local_path = new Path (System.getenv("PWD")+"/"+ hdfs_path.getName.split("/").last)
-
-      if(UserGroupInformation.isSecurityEnabled){
-        val hdfs_conf = new Configuration()
-        logDebug("hdfs_path "+ hdfs_path)
-        logDebug("local_path "+ local_path)
-//        hdfs_conf.addResource(new Path("/home/hadoop/hadoop/conf/mapred-site.xml"))
-
-        val fileSystem = FileSystem.get(hdfs_conf)
-        UserGroupInformation.getCurrentUser.doAs(new PrivilegedAction[Void] {
-          override def run() = {
-            try {
-              if (hdfs_path.toString.contains("hdfs:")) {
-                fileSystem.copyToLocalFile(hdfs_path, local_path)
+      var hdfs_path : Path = null
+      var principal = ""
+      var local_path : Path = null
+      if(UserGroupInformation.isSecurityEnabled) {
+        if( !cmd.hasOption("keytab") || !cmd.hasOption("principal") ){
+          throw new Error(" You have to specify keytab and principal when security is enabled ")
+        }else
+        {
+          hdfs_path = new Path(cmd.getOptionValue("keytab", ""))
+          principal = cmd.getOptionValue("principal", "")
+          local_path = new Path(System.getenv("PWD") + "/" + hdfs_path.getName.split("/").last)
+          val hdfs_conf = new Configuration()
+          val fileSystem = FileSystem.get(hdfs_conf)
+          UserGroupInformation.getCurrentUser.doAs(new PrivilegedAction[Void] {
+            override def run() = {
+              try {
+                if (cmd.hasOption("keytab")) {
+                  if (hdfs_path.toString.contains("hdfs:")) {
+                    fileSystem.copyToLocalFile(hdfs_path, local_path)
+                  }
+                }
+                null
               }
-               null
             }
-          }
-        })
+          })
+        }
       }
       /**
         * HBase & kerberos Configuration
@@ -120,7 +97,6 @@ object Streamer extends Logging{
       hbase_conf.set("hbase.zookeeper.quorum", cmd.getOptionValue("z","master1.ryba,master2.ryba,master3.ryba"))
       hbase_conf.set("hbase.zookeeper.property.clientPort", cmd.getOptionValue("zp","2181"))
       hbase_conf.set("hadoop.security.authentication", "kerberos")
-      hbase_conf.set("hbase.security.authentication", "kerberos"
       /**
         * commandline option parsing
         */
@@ -143,7 +119,6 @@ object Streamer extends Logging{
         */
       val messages = KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topicsSet)
       // http://spark.apache.org/docs/1.4.1/streaming-programming-guide.html#output-operations
-
       var counter = 0
       val pairs = messages.map(s => (s, 1))
       val number_message = pairs.reduceByKey((a, b) => a + b).count()
@@ -162,7 +137,6 @@ object Streamer extends Logging{
           val KafkaOutputWriter: KafkaProducer = new KafkaProducer()
           KafkaOutputWriter.writeToKafka(cmd.getOptionValue("output_topic", "output_topic"), message, producer)
         }
-
         /*** Writing to HBase if 'table' name specified */
         if (cmd.hasOption("table")) {
           val hbaseOutputWriter: HbaseWriter = new HbaseWriter()
@@ -170,7 +144,7 @@ object Streamer extends Logging{
           val table_name = cmd.getOptionValue("table")
           if (UserGroupInformation.isSecurityEnabled) {
             // Authenticate as the USER and return the USER with VALID KERBEROS CREDENTIALS
-//            val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(cmd.getOptionValue("principal", "tester@HADOOP.RYBA"), cmd.getOptionValue("keytab", "/etc/security/keytabs/tester.keytab"))
+            // val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(cmd.getOptionValue("principal", "tester@HADOOP.RYBA"), cmd.getOptionValue("keytab", "/etc/security/keytabs/tester.keytab"))
             val loggedUGI: UserGroupInformation = UserGroupInformation.loginUserFromKeytabAndReturnUGI(principal, local_path.toString)
             val c: Configuration = hbase_conf
             // OPEN HBase connection with Previous USER
@@ -197,7 +171,6 @@ object Streamer extends Logging{
                     val table_bulk: HTableInterface = hConnection.getTable(cmd.getOptionValue("bulk"))
                     // bulk put
                     hbaseOutputWriter.insertToHbase(rowkey + "-", "content", x.distinct(), "cf1", table_bulk)
-
                   }
                 }
                 null
@@ -205,7 +178,6 @@ object Streamer extends Logging{
             })
           }
           else {
-            // old HBase API usage
             val admin: HBaseAdmin = new HBaseAdmin(hbase_conf)
             if (!admin.isTableAvailable(table_name)) {
               val tableDesc: HTableDescriptor = new HTableDescriptor(TableName.valueOf(table_name))
@@ -221,7 +193,6 @@ object Streamer extends Logging{
                 admin.createTable(tableDescbulk)
               }
               val table_bulk: HTableInterface = hConnection.getTable(cmd.getOptionValue("bulk"))
-
               // bulk put
               hbaseOutputWriter.insertToHbase(rowkey + "-", "content", x.distinct(), "cf1", table_bulk)
             }
@@ -238,4 +209,3 @@ object Streamer extends Logging{
     }
   }
 }
-
