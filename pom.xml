@@ -101,7 +101,7 @@
         <configuration>
           <archive>
             <manifest>
-              <mainClass>com.adaltas.www.Streamer</mainClass>
+              <mainClass>com.adaltas.www.KafkaStreamerToHbase</mainClass>
             </manifest>
           </archive>
           <descriptorRefs>

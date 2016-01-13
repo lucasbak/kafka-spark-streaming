@@ -145,6 +145,16 @@ The Spark Job will write to hbase table_message, at 'cf1' column family
   -table table_message
   -bulk table_bulk
   ```
+## KafkaStreamerToHbase Example
+
+This class read data from kafka and writes it to hbase
+It has been written to show how a spark code hould be distributed
+
+### Stream division
+
+The stream is divided into RDDs and the same code is applied on each RDD
+this is made throuft messages.foreachR
+
 
 ## Debugging
 

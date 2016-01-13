@@ -50,20 +50,34 @@ class HbaseWriter {
     message.foreach(x => println(x))
     println("--")
     message.collect().foreach(x => {
-      if((x._1 != null) && (x._2!=null)){
+      var counter = 0
+      if((x._1 != null)){
         println(rowkey+"-"+x._1.toString + cf + qualifier + x._1.toString + "--|--" +x._2.toString)
+        val put = new Put(Bytes.toBytes(rowkey+"-"+x._1.toString))
+        put.add(Bytes.toBytes(cf), Bytes.toBytes(qualifier), Bytes.toBytes(x._1.toString + "--|--" +x._2.toString))
+        puts.add(put)
       }else
       {
-        println(rowkey+"kafka empty message")
+        println("nu,ber of message"  + counter)
+        val put = new Put(Bytes.toBytes(rowkey+"kafka empty message"))
+        put.add(Bytes.toBytes(cf), Bytes.toBytes(qualifier), Bytes.toBytes(counter.toString))
+        puts.add(put)
+        counter = counter + 1
       }
-      val put = new Put(Bytes.toBytes(rowkey+"-"+x._1.toString))
-      put.add(Bytes.toBytes(cf), Bytes.toBytes(qualifier), Bytes.toBytes(x._1.toString + "--|--" +x._2.toString))
-      puts.add(put)
+
 
     })
     println(puts)
     table.put(puts)
     println("bulk load written")
+
+  }
+
+  def insertOneLineToHbase(rowkey: String, qualifier:String, message: String, cf: String, table: HTableInterface ) : Unit = {
+
+        val put = new Put(Bytes.toBytes(rowkey))
+        put.add(Bytes.toBytes(cf), Bytes.toBytes(qualifier), Bytes.toBytes(message))
+        table.put(put)
 
   }
 
