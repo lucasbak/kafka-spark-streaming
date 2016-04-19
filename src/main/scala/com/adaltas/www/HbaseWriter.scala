@@ -49,7 +49,7 @@ class HbaseWriter {
     println("--")
     message.foreach(x => println(x))
     println("--")
-    message.collect().foreach(x => {
+    message.foreach(x => {
       var counter = 0
       if((x._1 != null)){
         println(rowkey+"-"+x._1.toString + cf + qualifier + x._1.toString + "--|--" +x._2.toString)
