@@ -125,6 +125,8 @@ object KafkaStreamerToHbase extends Logging {
             /** * HBASE CONFIGURATION*/
               val table_name = cmd.getOptionValue("table","table_tester")
               val hbase_conf: Configuration = HBaseConfiguration.create()
+              hbase_conf.addResource(new Path(System.getenv("PWD")+"/"+"core-site.xml"))
+              hbase_conf.addResource(new Path(System.getenv("PWD")+"/"+"hbase-site.xml"))
               hbase_conf.set("hbase.rpc.controllerfactory.class", "org.apache.hadoop.hbase.ipc.RpcControllerFactory")
               hbase_conf.set("hbase.zookeeper.quorum", cmd.getOptionValue("z", "master1.ryba,master2.ryba,master3.ryba"))
               hbase_conf.set("hbase.zookeeper.property.clientPort", cmd.getOptionValue("zp", "2181"))
